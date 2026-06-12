@@ -82,30 +82,71 @@ async function fetchIgiheArticleDetail(link) {
     const html = await fetchWithRetry(link);
     const $ = cheerio.load(html);
 
-    const fullTextEl = $('.fulltext');
+    // Try multiple content selectors
+    const contentSelectors = [
+      '.fulltext', '.text-article', '.article-content',
+      '.post-content', '.entry-content', '.content-article',
+      'article', '.article-body', '.main-text',
+      '#content', '.contenu', '.description',
+      '.texte', '.corps-article', '.article-text'
+    ];
+
     let fullContent = '';
-    if (fullTextEl.length) {
-      fullTextEl.find('script, .article-banner-section, .commentaire-section, .izindi-section, .featured-section').remove();
-      fullContent = fullTextEl.text().trim();
+    for (const sel of contentSelectors) {
+      const $el = $(sel);
+      if ($el.length) {
+        $el.find('script, style, iframe, .article-banner-section, .commentaire-section, .izindi-section, .featured-section, .share, .social, .related, .comments').remove();
+        fullContent = $el.text().trim();
+        if (fullContent.length > 100) break;
+      }
     }
 
     if (!fullContent || fullContent.length < 100) {
-      fullContent = $('.text-article').text().trim();
+      fullContent = $('p').map((i, el) => $(el).text().trim()).get().filter(t => t.length > 20).join('\n\n');
     }
 
-    const author = $('.vcard.author').first().text().trim() || '';
+    // Try multiple author selectors
+    const authorSelectors = ['.vcard.author', '.author', '.byline', '.writer', '.meta-author', '[rel="author"]', '.auteur'];
+    let author = '';
+    for (const sel of authorSelectors) {
+      const $el = $(sel).first();
+      if ($el.length) {
+        author = $el.text().trim();
+        if (author) break;
+      }
+    }
 
-    const dateText = $('.date_x').first().text().trim();
+    // Try multiple date selectors
+    const dateSelectors = ['.date_x', '.date', '.pubdate', '.published', '.meta-date', '.time', '.post-date', 'time'];
     let publishedAt = null;
-    if (dateText) {
-      const dateMatch = dateText.match(/(\d{1,2}\s+\w+\s+\d{4})/);
-      if (dateMatch) publishedAt = new Date(dateMatch[1]);
+    for (const sel of dateSelectors) {
+      const dateText = $(sel).first().text().trim();
+      if (dateText) {
+        const dateMatch = dateText.match(/(\d{1,2}\s+\w+\s+\d{4})/);
+        if (dateMatch) {
+          publishedAt = new Date(dateMatch[1]);
+          break;
+        }
+      }
+    }
+    // Try time tag datetime attribute
+    if (!publishedAt) {
+      const datetime = $('time').attr('datetime') || '';
+      if (datetime) publishedAt = new Date(datetime);
     }
 
     const ogImage = $('meta[property="og:image"]').attr('content') || '';
+    const ogTitle = $('meta[property="og:title"]').attr('content') || '';
 
-    return { content: fullContent, author, publishedAt, ogImage };
+    return {
+      content: fullContent.slice(0, 15000),
+      author: author || 'IGIHE',
+      publishedAt: publishedAt && !isNaN(publishedAt) ? publishedAt : new Date(),
+      ogImage: ogImage || '',
+      ogTitle
+    };
   } catch (err) {
+    console.error(`[Igihe] Detail fetch error for ${link}: ${err.message}`);
     return null;
   }
 }
@@ -113,28 +154,116 @@ async function fetchIgiheArticleDetail(link) {
 async function parseIgiheListing(html, baseCategory) {
   const $ = cheerio.load(html);
   const articles = [];
+  const seen = new Set();
 
-  $('.article-wrap').each((i, el) => {
+  // Try multiple selector patterns — igihe.com may vary by category/page
+  const selectors = [
+    '.article-wrap',
+    'article',
+    '.news-item',
+    '.liste-news li',
+    '.grid-item',
+    '.blog-entry',
+    '.post-item',
+    'li[class*="news"]',
+    'div[class*="article"]',
+    '.col-md-6',
+    '.item-news',
+    '.news-list-item',
+    '.post-card'
+  ];
+
+  let $items = $(selectors.join(','));
+  if (!$items.length) {
+    $items = $('body').children('div, section, ul').children();
+  }
+
+  $items.each((i, el) => {
     const $el = $(el);
-    const titleEl = $el.find('.homenews-title a, .homenews-title2 a').first();
-    const title = titleEl.text().trim();
-    let href = titleEl.attr('href') || '';
+    if (!$el.text().trim()) return;
 
-    if (!title || title.length < 15) return;
+    // Find title — try many selector patterns
+    const titleSelectors = [
+      '.homenews-title a', '.homenews-title2 a',
+      'h2 a', 'h3 a', 'h4 a',
+      '.title a', '.entry-title a',
+      'a[title]', 'a[class*="title"]',
+      '.post-title a', '.headline a',
+      'a[href*="/article/"]', 'a[href*="/rubrique/"]',
+      'a[href*="/spip.php"]', 'a[href*="article"]'
+    ];
 
-    const link = href.startsWith('http') ? href : 'https://igihe.com/' + href;
+    let $titleEl = null;
+    for (const sel of titleSelectors) {
+      const $found = $el.find(sel).first();
+      if ($found.length && $found.text().trim().length >= 10) {
+        $titleEl = $found;
+        break;
+      }
+    }
+    if (!$titleEl || !$titleEl.length) return;
 
-    const rawCategory = $el.find('.hierarchi-rubrique a').first().text().trim() || baseCategory || 'World';
+    const title = $titleEl.text().trim();
+    if (!title || title.length < 10) return;
+    if (seen.has(title)) return;
+    seen.add(title);
+
+    let href = $titleEl.attr('href') || '';
+    if (!href || href === '#') {
+      // Try parent link
+      const $parentLink = $el.find('a[href]').first();
+      href = $parentLink.attr('href') || '';
+    }
+    if (!href || href === '#') return;
+
+    const link = href.startsWith('http') ? href : 'https://igihe.com/' + href.replace(/^\//, '');
+
+    const rawCategory = baseCategory || 'World';
     const category = mapCategory(rawCategory);
 
-    const imgEl = $el.find('img.lazy').first();
-    const image = imgEl.attr('data-original') || imgEl.attr('src') || '';
-    const fullImage = image.startsWith('http') ? image : (image ? 'https://igihe.com/' + image : '');
+    // Find image
+    const $imgEl = $el.find('img[src]').first();
+    let image = $imgEl.attr('src') || $imgEl.attr('data-src') || $imgEl.attr('data-lazy-src') || '';
 
-    articles.push({ title, link, category, image: fullImage, excerpt: title, source: 'igihe' });
+    if (image && !image.startsWith('http')) {
+      if (image.startsWith('//')) {
+        image = 'https:' + image;
+      } else if (image.startsWith('/')) {
+        image = 'https://igihe.com' + image;
+      } else {
+        image = 'https://igihe.com/' + image;
+      }
+    }
+
+    // Try meta og:image if no image found
+    if (!image) {
+      image = $('meta[property="og:image"]').attr('content') || '';
+    }
+
+    articles.push({ title, link, category, image, excerpt: title, source: 'igihe' });
   });
 
-  return articles;
+  // Fallback: if no articles found with above, try a more aggressive approach
+  if (articles.length === 0) {
+    $('a[href]').each((i, el) => {
+      const $a = $(el);
+      const href = $a.attr('href') || '';
+      const text = $a.text().trim();
+
+      if (text.length < 15) return;
+      if (seen.has(text)) return;
+      if (!href || href === '#' || href.startsWith('javascript')) return;
+      if (href.includes('/spip.php?') || href.includes('/rubrique') || href.includes('/article')) {
+        seen.add(text);
+        const link = href.startsWith('http') ? href : 'https://igihe.com/' + href.replace(/^\//, '');
+        const image = $('meta[property="og:image"]').attr('content') || '';
+        articles.push({ title: text, link, category: mapCategory(baseCategory), image, excerpt: text, source: 'igihe' });
+      }
+    });
+  }
+
+  console.log(`[Igihe] Parsed ${articles.length} articles from ${baseCategory} listing`);
+  return articles.slice(0, 30);
 }
 
 async function scrapeIgiheCategory(catConfig, maxPages = 2) {

@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
 
     const articles = await Article.find(filter)
       .sort({ publishedAt: -1 })
-      .limit(parseInt(req.query.limit) || 20);
+      .limit(parseInt(req.query.limit) || 50);
     res.json(articles);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -22,14 +22,15 @@ router.get('/', async (req, res) => {
 
 router.get('/featured', async (req, res) => {
   try {
+    const limit = parseInt(req.query.limit) || 20;
     let articles = await Article.find({ featured: true })
       .sort({ publishedAt: -1 })
-      .limit(15);
-    if (articles.length < 12) {
+      .limit(limit);
+    if (articles.length < limit) {
       const featuredIds = articles.map(a => a._id);
       const recent = await Article.find({ _id: { $nin: featuredIds } })
         .sort({ publishedAt: -1 })
-        .limit(15 - articles.length);
+        .limit(limit - articles.length);
       articles = [...articles, ...recent];
     }
     res.json(articles);

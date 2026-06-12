@@ -12,6 +12,8 @@ const advertisementsRouter = require('./routes/advertisements');
 const scraperRouter = require('./routes/scraper');
 const subscriptionsRouter = require('./routes/subscriptions');
 const usersRouter = require('./routes/users');
+const cron = require('node-cron');
+const { scrapeAll } = require('./services/scraper');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -42,6 +44,30 @@ app.get('/api/health', (req, res) => {
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => {
     console.log('Connected to MongoDB');
+
+    // Auto-start scraper cron — runs every 15 minutes
+    cron.schedule('*/15 * * * *', async () => {
+      console.log('[Scraper] Auto-run every 15 minutes...');
+      try {
+        const stats = await scrapeAll();
+        console.log('[Scraper] Auto-run complete:', JSON.stringify(stats));
+      } catch (err) {
+        console.error('[Scraper] Auto-run error:', err.message);
+      }
+    });
+    console.log('[Scraper] Cron scheduled: every 15 minutes');
+
+    // Run scraper immediately on first boot (after 10s delay)
+    setTimeout(async () => {
+      console.log('[Scraper] Initial boot scrape...');
+      try {
+        const stats = await scrapeAll();
+        console.log('[Scraper] Initial scrape complete:', JSON.stringify(stats));
+      } catch (err) {
+        console.error('[Scraper] Initial scrape error:', err.message);
+      }
+    }, 10000);
+
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });

@@ -53,7 +53,6 @@ const articleSchema = new mongoose.Schema({
   },
   source: {
     type: String,
-    enum: ['igihe', 'BBC', 'bbc', 'the news', 'the-news', 'manual', ''],
     default: 'manual'
   }
 }, {
