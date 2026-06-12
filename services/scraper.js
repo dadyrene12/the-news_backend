@@ -72,6 +72,7 @@ async function fetchWithRetry(url, retries = 2) {
       });
       return res.data;
     } catch (err) {
+      console.error(`[Fetch] Attempt ${i+1}/${retries+1} failed for ${url}: ${err.message}`);
       if (i === retries) throw err;
     }
   }
@@ -291,6 +292,7 @@ async function scrapeIgiheCategory(catConfig, maxPages = 2) {
 
       if (articles.length < 15) break;
     } catch (err) {
+      console.error(`[Igihe] Error fetching ${catConfig.slug} page ${page}: ${err.message}`);
       break;
     }
   }
@@ -299,15 +301,22 @@ async function scrapeIgiheCategory(catConfig, maxPages = 2) {
 }
 
 async function parseIgihe() {
-  console.log('[Igihe] Scraping all categories in parallel...');
+  console.log('[Igihe] Scraping all categories (concurrency: 3)...');
 
-  const results = await Promise.allSettled(
-    IGIHE_CATEGORY_URLS.map(cat => scrapeIgiheCategory(cat, 2))
-  );
-
-  let allArticles = [];
-  for (const r of results) {
-    if (r.status === 'fulfilled') allArticles = allArticles.concat(r.value);
+  // Limit concurrent requests to avoid triggering rate limiting
+  const concurrency = 3;
+  const allArticles = [];
+  for (let i = 0; i < IGIHE_CATEGORY_URLS.length; i += concurrency) {
+    const batch = IGIHE_CATEGORY_URLS.slice(i, i + concurrency);
+    const results = await Promise.allSettled(
+      batch.map(cat => scrapeIgiheCategory(cat, 2))
+    );
+    for (const r of results) {
+      if (r.status === 'fulfilled') allArticles.push(...r.value);
+    }
+    if (i + concurrency < IGIHE_CATEGORY_URLS.length) {
+      await new Promise(r => setTimeout(r, 1000)); // 1s delay between batches
+    }
   }
 
   console.log(`[Igihe] ${allArticles.length} articles from listings`);
