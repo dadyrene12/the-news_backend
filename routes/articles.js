@@ -23,17 +23,44 @@ router.get('/', async (req, res) => {
 router.get('/featured', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
-    let articles = await Article.find({ featured: true })
+
+    // 1. Get manually featured articles (admin picks)
+    const featured = await Article.find({ featured: true })
       .sort({ publishedAt: -1 })
       .limit(limit);
-    if (articles.length < limit) {
-      const featuredIds = articles.map(a => a._id);
-      const recent = await Article.find({ _id: { $nin: featuredIds } })
-        .sort({ publishedAt: -1 })
-        .limit(limit - articles.length);
-      articles = [...articles, ...recent];
+
+    if (featured.length >= limit) {
+      return res.json(featured);
     }
-    res.json(articles);
+
+    const featuredIds = featured.map(a => a._id);
+    const needed = limit - featured.length;
+
+    // 2. Get recent articles per source for diversity
+    const sources = await Article.distinct('source', { _id: { $nin: featuredIds } });
+    const perSource = Math.ceil(needed / sources.length);
+
+    const sourceArticles = await Promise.all(
+      sources.map(source =>
+        Article.find({ source, _id: { $nin: featuredIds } })
+          .sort({ publishedAt: -1 })
+          .limit(perSource)
+          .lean()
+      )
+    );
+
+    // 3. Interleave by source for balanced display
+    const interleaved = [];
+    let maxLen = Math.max(...sourceArticles.map(a => a.length));
+    for (let i = 0; i < maxLen; i++) {
+      for (const arts of sourceArticles) {
+        if (arts[i]) interleaved.push(arts[i]);
+        if (interleaved.length >= needed) break;
+      }
+      if (interleaved.length >= needed) break;
+    }
+
+    res.json([...featured, ...interleaved]);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -41,9 +68,14 @@ router.get('/featured', async (req, res) => {
 
 router.get('/breaking', async (req, res) => {
   try {
-    const articles = await Article.find({ breaking: true })
+    let articles = await Article.find({ breaking: true })
       .sort({ publishedAt: -1 })
       .limit(6);
+    if (articles.length === 0) {
+      articles = await Article.find()
+        .sort({ publishedAt: -1 })
+        .limit(6);
+    }
     res.json(articles);
   } catch (err) {
     res.status(500).json({ message: err.message });
