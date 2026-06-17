@@ -22,7 +22,7 @@ router.get('/', async (req, res) => {
 
 router.get('/featured', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 20;
+    const limit = parseInt(req.query.limit) || 30;
 
     // 1. Get manually featured articles (admin picks)
     const featured = await Article.find({ featured: true })
@@ -68,14 +68,10 @@ router.get('/featured', async (req, res) => {
 
 router.get('/breaking', async (req, res) => {
   try {
-    let articles = await Article.find({ breaking: true })
+    const limit = parseInt(req.query.limit) || 20;
+    const articles = await Article.find()
       .sort({ publishedAt: -1 })
-      .limit(6);
-    if (articles.length === 0) {
-      articles = await Article.find()
-        .sort({ publishedAt: -1 })
-        .limit(6);
-    }
+      .limit(limit);
     res.json(articles);
   } catch (err) {
     res.status(500).json({ message: err.message });

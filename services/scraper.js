@@ -160,6 +160,7 @@ async function parseIgiheListing(html, baseCategory) {
   // Try multiple selector patterns — igihe.com may vary by category/page
   const selectors = [
     '.article-wrap',
+    '.homenews',
     'article',
     '.news-item',
     '.liste-news li',
@@ -171,7 +172,9 @@ async function parseIgiheListing(html, baseCategory) {
     '.col-md-6',
     '.item-news',
     '.news-list-item',
-    '.post-card'
+    '.post-card',
+    '.izindi-box',
+    '.advertorial-news'
   ];
 
   let $items = $(selectors.join(','));
@@ -190,6 +193,7 @@ async function parseIgiheListing(html, baseCategory) {
       '.title a', '.entry-title a',
       'a[title]', 'a[class*="title"]',
       '.post-title a', '.headline a',
+      '.art-title a',
       'a[href*="/article/"]', 'a[href*="/rubrique/"]',
       'a[href*="/spip.php"]', 'a[href*="article"]'
     ];
@@ -273,9 +277,10 @@ async function scrapeIgiheCategory(catConfig, maxPages = 2) {
 
   for (let page = 0; page < maxPages; page++) {
     const offset = page * 15;
+    const base = `https://igihe.com/${catConfig.slug}`;
     const url = offset === 0
-      ? `https://igihe.com/${catConfig.slug}/`
-      : `https://igihe.com/${catConfig.slug}?debut_gh_news=${offset}#pagination_gh_news`;
+      ? `${base}/`
+      : `${base}/?debut_gh_news=${offset}#pagination_gh_news`;
 
     try {
       const html = await fetchWithRetry(url);
@@ -468,7 +473,7 @@ async function saveArticles(articles, source) {
         author: 'THE NEWS',
         image: article.image || '',
         featured: false,
-        breaking: false,
+        breaking: true,
         publishedAt: article.publishedAt || new Date(),
         link: article.link,
         source: article.source || source.toLowerCase()
